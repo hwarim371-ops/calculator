@@ -46,8 +46,9 @@
     function App() {
       const [view, setView] = useState('upload'); // 'upload', 'dashboard', 'calculator'
       const [history, setHistory] = useState([]);
-      const [quotes, setQuotes] = useState([]); // 현재 비교 중인 견적서 목록 (더미데이터 제거, 빈 배열로 시작)
+      const [quotes, setQuotes] = useState([]); 
       const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [isDragging, setIsDragging] = useState(false); // 드래그 상태 추가
       const [isLoading, setIsLoading] = useState(false);
       const [toast, setToast] = useState('');
       const [saveTitle, setSaveTitle] = useState('');
@@ -57,7 +58,7 @@
       // 페이지 로드 시 구글 시트의 내역 가져오기
       useEffect(() => { loadHistory(); }, []);
 
-      const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 3500); };
+      const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 4000); };
 
       const loadHistory = async () => {
         try {
@@ -67,9 +68,8 @@
         } catch (e) { console.error("데이터 로드 실패:", e); }
       };
 
-      // --- [AI 제미나이 직접 호출 및 분석] ---
-      const handleFileUpload = async (e) => {
-        const file = e.target.files[0];
+      // --- [AI 제미나이 분석 엔진 (파일 객체 처리)] ---
+      const processFile = async (file) => {
         if (!file) return;
 
         setIsAnalyzing(true);
@@ -77,7 +77,7 @@
         reader.onload = async () => {
           const base64Data = reader.result.split(',')[1];
           try {
-            // 프론트엔드에서 직접 Gemini 2.5 Flash API 호출 (구조화된 JSON 출력 강제)
+            // 프론트엔드에서 직접 Gemini 2.5 Flash API 호출
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -105,7 +105,7 @@
                             id: { type: "NUMBER" },
                             name: { type: "STRING", description: "품명/공사명" },
                             spec: { type: "STRING", description: "규격/사이즈 (없으면 빈문자열)" },
-                            unit: { type: "STRING", description: "단위 (식, 식, 개 등)" },
+                            unit: { type: "STRING", description: "단위 (식, 개 등)" },
                             qty: { type: "NUMBER", description: "수량 (숫자)" },
                             unitPrice: { type: "NUMBER", description: "단가 (숫자)" },
                             total: { type: "NUMBER", description: "해당 품목의 합계 금액 (숫자)" }
@@ -119,7 +119,11 @@
               })
             });
 
-            if (!response.ok) throw new Error("API 연동 오류");
+            // 에러 처리 강화 (잘못된 API키 등 안내)
+            if (!response.ok) {
+              const errorData = await response.json();
+              throw new Error(errorData.error?.message || "API 연동 오류");
+            }
             
             const result = await response.json();
             const jsonText = result.candidates[0].content.parts[0].text;
@@ -133,14 +137,30 @@
             showToast(`[${parsedData.name}] 견적서가 추가되었습니다!`);
             
           } catch (err) {
-            console.error(err);
-            showToast("AI 분석 중 오류가 발생했습니다. 파일이 선명한지 확인해주세요.");
+            console.error("AI Error:", err);
+            showToast(`오류 발생: ${err.message.slice(0,50)}... API 키 및 파일 형식을 확인하세요.`);
           } finally {
             setIsAnalyzing(false);
-            e.target.value = ''; // Input 초기화 (동일 파일 재업로드 가능하게)
           }
         };
         reader.readAsDataURL(file);
+      };
+
+      // 입력 버튼 업로드 
+      const handleFileChange = (e) => {
+        if(e.target.files && e.target.files[0]) {
+          processFile(e.target.files[0]);
+          e.target.value = ''; // Input 초기화
+        }
+      };
+
+      // 드래그 앤 드롭 업로드 핸들러
+      const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+          processFile(e.dataTransfer.files[0]);
+        }
       };
 
       // --- [구글 시트에 저장] ---
@@ -174,7 +194,6 @@
         }
       };
 
-      // 상세 내역 수정 후 대시보드로 돌아오기
       const handleUpdateQuote = (updatedQuote) => {
         setQuotes(prev => prev.map(q => q.id === updatedQuote.id ? updatedQuote : q));
         setView('dashboard');
@@ -206,10 +225,15 @@
               </p>
             </div>
 
-            {/* Upload Section */}
+            {/* Upload Section (드래그 앤 드롭 완벽 지원) */}
             <div className="w-full max-w-4xl glass-effect bg-white/80 rounded-[2rem] shadow-2xl p-8 md:p-14 mb-12 border border-white">
-              <label className="group relative flex flex-col items-center justify-center w-full h-80 border-2 border-dashed border-blue-200 rounded-3xl bg-blue-50/30 hover:bg-blue-50/80 hover:border-blue-400 transition-all cursor-pointer overflow-hidden">
-                <input type="file" className="hidden" onChange={handleFileUpload} accept=".pdf,image/*" disabled={isAnalyzing} />
+              <label 
+                className={`group relative flex flex-col items-center justify-center w-full h-80 border-2 border-dashed rounded-3xl transition-all cursor-pointer overflow-hidden ${isDragging ? 'border-blue-500 bg-blue-100 scale-[1.02]' : 'border-blue-200 bg-blue-50/30 hover:bg-blue-50/80 hover:border-blue-400'}`}
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
+                onDrop={handleDrop}
+              >
+                <input type="file" className="hidden" onChange={handleFileChange} accept=".pdf,image/*" disabled={isAnalyzing} />
                 
                 {isAnalyzing ? (
                   <div className="flex flex-col items-center z-10">
@@ -219,10 +243,12 @@
                   </div>
                 ) : (
                   <div className="flex flex-col items-center z-10 transition-transform group-hover:-translate-y-2">
-                    <div className="p-5 bg-white rounded-full shadow-md text-blue-500 mb-6 group-hover:scale-110 transition-transform">
+                    <div className={`p-5 rounded-full shadow-md mb-6 transition-transform ${isDragging ? 'bg-blue-500 text-white scale-110' : 'bg-white text-blue-500 group-hover:scale-110'}`}>
                       <UploadCloud size={48} strokeWidth={2} />
                     </div>
-                    <p className="text-2xl font-bold text-slate-700 mb-2">견적서 파일을 이곳에 드래그하거나 클릭</p>
+                    <p className={`text-2xl font-bold mb-2 ${isDragging ? 'text-blue-700' : 'text-slate-700'}`}>
+                      {isDragging ? "파일을 여기에 내려놓으세요!" : "견적서 파일을 이곳에 드래그하거나 클릭"}
+                    </p>
                     <p className="text-slate-400 font-medium">PDF 문서, JPG, PNG 파일 완벽 지원</p>
                   </div>
                 )}
@@ -301,7 +327,7 @@
                 <div className="flex gap-3 w-full md:w-auto">
                   <label className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-bold cursor-pointer hover:bg-blue-100 transition-colors">
                     <Plus size={18} /> 추가 비교
-                    <input type="file" className="hidden" onChange={handleFileUpload} accept=".pdf,image/*" />
+                    <input type="file" className="hidden" onChange={handleFileChange} accept=".pdf,image/*" />
                   </label>
                   <button onClick={()=>setIsSaveModal(true)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-md">
                     <Save size={18}/> 결과 저장
@@ -363,7 +389,7 @@
               ) : (
                 <div className="bg-blue-50/50 border border-blue-100 p-8 rounded-2xl text-center">
                   <p className="text-blue-800 font-bold mb-2">단일 견적서가 분석되었습니다.</p>
-                  <p className="text-blue-600 text-sm">우측 상단의 '추가 비교' 버튼을 눌러 다른 업체의 견적서를 업로드하면 그래프로 비교할 수 있습니다.</p>
+                  <p className="text-blue-600 text-sm">상단의 '추가 비교' 버튼을 눌러 다른 견적서를 업로드하면 그래프로 비교할 수 있습니다.</p>
                 </div>
               )}
 
