@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>화림건설 범용 AI 견적 분석기</title>
-  <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
-  <script src="[https://unpkg.com/@babel/standalone/babel.min.js](https://unpkg.com/@babel/standalone/babel.min.js)"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    @import url('[https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css](https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css)');
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     body { background-color: #f1f5f9; font-family: 'Pretendard', sans-serif; -webkit-tap-highlight-color: transparent; }
     .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
@@ -26,16 +26,16 @@
   <div id="root"></div>
 
   <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useRef, useMemo } from "[https://esm.sh/react@18.2.0](https://esm.sh/react@18.2.0)";
-    import { createRoot } from "[https://esm.sh/react-dom@18.2.0/client](https://esm.sh/react-dom@18.2.0/client)";
-    import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Legend } from "[https://esm.sh/recharts@2.12.3?deps=react@18.2.0,react-dom@18.2.0](https://esm.sh/recharts@2.12.3?deps=react@18.2.0,react-dom@18.2.0)";
-    import { UploadCloud, CheckCircle, ArrowLeft, Calculator, BarChart3, Edit3, Save, FolderOpen, Clock, X, FileText, Plus, AlertTriangle, TrendingDown } from "[https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0](https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0)";
+    import React, { useState, useEffect, useRef, useMemo } from "https://esm.sh/react@18.2.0";
+    import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
+    import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Legend } from "https://esm.sh/recharts@2.12.3?deps=react@18.2.0,react-dom@18.2.0";
+    import { UploadCloud, CheckCircle, ArrowLeft, Calculator, BarChart3, Edit3, Save, FolderOpen, Clock, X, FileText, Plus, AlertTriangle, TrendingDown } from "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0";
 
     // =========================================================================
     // ⚙️ 필수 연동 설정
     // =========================================================================
     // 1. 구글 스크립트 배포 URL
-    const GAS_WEB_APP_URL = "[https://script.google.com/macros/s/AKfycby2WMcrrjfioYaKIDohM4ccSFA_Ez3cMU-DtDt-ZvT4DclWtd4FFIwLGLj1DHXaytoaew/exec](https://script.google.com/macros/s/AKfycby2WMcrrjfioYaKIDohM4ccSFA_Ez3cMU-DtDt-ZvT4DclWtd4FFIwLGLj1DHXaytoaew/exec)";
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycby2WMcrrjfioYaKIDohM4ccSFA_Ez3cMU-DtDt-ZvT4DclWtd4FFIwLGLj1DHXaytoaew/exec";
     
     // 2. 구글 제미나이 AI API 키
     const GEMINI_API_KEY = "AQ.Ab8RN6JVV1VDDAcAUqgnurb21txb-uloDM_JurvnDMbSXwYUWQ";
@@ -74,10 +74,20 @@
       const processFile = async (file) => {
         if (!file) return;
 
-        // 허용된 파일 타입 검증 (Gemini는 이미지와 PDF만 지원)
-        const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic'];
-        if (!validTypes.includes(file.type)) {
-          showToast("지원하지 않는 파일입니다. (PDF 또는 JPG, PNG 이미지 파일만 가능)");
+        // OS별 MIME 타입 누락 방어를 위한 확장자 체크 추가
+        let mimeType = file.type;
+        const fileName = file.name.toLowerCase();
+        
+        if (!mimeType) {
+          if (fileName.endsWith('.pdf')) mimeType = 'application/pdf';
+          else if (fileName.endsWith('.png')) mimeType = 'image/png';
+          else if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) mimeType = 'image/jpeg';
+          else if (fileName.endsWith('.webp')) mimeType = 'image/webp';
+        }
+
+        const isValidFile = mimeType === 'application/pdf' || mimeType.startsWith('image/');
+        if (!isValidFile) {
+          showToast("지원하지 않는 파일입니다. (PDF 또는 사진 파일만 업로드 가능)");
           if (fileInputRef.current) fileInputRef.current.value = '';
           return;
         }
@@ -101,7 +111,7 @@
                 contents: [{
                   parts: [
                     { text: "당신은 전문 견적 분석가입니다. 첨부된 견적서(이미지/PDF)를 분석하여 정보를 추출하세요. 항목이 없거나 알 수 없으면 0 또는 빈문자열로 기재하세요. 결과는 반드시 JSON 스키마를 엄격히 준수하여 순수 JSON 포맷으로만 응답해야 합니다. 마크다운 기호를 사용하지 마세요." },
-                    { inlineData: { mimeType: file.type, data: base64Data } }
+                    { inlineData: { mimeType: mimeType, data: base64Data } }
                   ]
                 }],
                 generationConfig: {
@@ -270,9 +280,13 @@
                 onDragOver={onDragOver}
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
-                onClick={() => { if(!isAnalyzing) fileInputRef.current?.click(); }}
+                onClick={(e) => { 
+                  // input 요소 자체 클릭 시 중복 실행(버블링) 방지
+                  if (e.target.tagName.toLowerCase() === 'input') return;
+                  if (!isAnalyzing && fileInputRef.current) fileInputRef.current.click(); 
+                }}
               >
-                <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept=".pdf,image/jpeg,image/png,image/webp,image/heic" disabled={isAnalyzing} />
+                <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept=".pdf,image/*" disabled={isAnalyzing} />
                 
                 {isAnalyzing ? (
                   <div className="flex flex-col items-center z-10">
@@ -288,7 +302,7 @@
                     <p className={`text-2xl font-bold mb-2 ${isDragging ? 'text-blue-700' : 'text-slate-700'}`}>
                       {isDragging ? "파일을 여기에 내려놓으세요!" : "견적서 파일을 이곳에 드래그하거나 클릭"}
                     </p>
-                    <p className="text-slate-400 font-medium">PDF 문서, JPG, PNG 파일 완벽 지원</p>
+                    <p className="text-slate-400 font-medium">PDF 문서, JPG, PNG 사진 파일 완벽 지원</p>
                   </div>
                 )}
               </div>
@@ -364,9 +378,15 @@
                   </div>
                 </div>
                 <div className="flex gap-3 w-full md:w-auto">
-                  <button onClick={() => { if(!isAnalyzing) fileInputRef.current?.click(); }} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-bold cursor-pointer hover:bg-blue-100 transition-colors">
+                  <button 
+                    onClick={(e) => { 
+                      if(e.target.tagName.toLowerCase() === 'input') return;
+                      if(!isAnalyzing && fileInputRef.current) fileInputRef.current.click(); 
+                    }} 
+                    className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-bold cursor-pointer hover:bg-blue-100 transition-colors"
+                  >
                     <Plus size={18} /> 추가 비교
-                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept=".pdf,image/jpeg,image/png,image/webp" />
+                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept=".pdf,image/*" />
                   </button>
                   <button onClick={()=>setIsSaveModal(true)} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-md">
                     <Save size={18}/> 결과 저장
