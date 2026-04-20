@@ -35,7 +35,7 @@
     // =========================================================================
     // ⚙️ 연동 설정
     // =========================================================================
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzfFM7JzFXt1pNXl2ptxqxVOoGkJV-e1_atFfzk-cNSvmh6UdFORZoNWD3siUQiCohE/exec";
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxmbPacKvLhm2S8MhTuElZye0meyTlUCB-lHBIEXqOwJaGN7e3YmQPPQLAb4J-5bGLy/exec";
     
     // ⚠️ 구글에 의해 기존 API 키가 유출/차단되었습니다. 새 API 키를 발급받아 아래 빈 문자열 안에 넣으세요.
     const apiKey  = "AIzaSyAoS2EUqHFikl1B3uMif8GmE6ahycxlCMA"; 
@@ -111,6 +111,7 @@
       const [savedList, setSavedList] = useState([]);
       const [isLoadingList, setIsLoadingList] = useState(false);
       const [loadedFolderName, setLoadedFolderName] = useState('');
+      const [imageViewModal, setImageViewModal] = useState({ open: false, quote: null });
       
       const [searchTerm, setSearchTerm] = useState('');
 
@@ -415,12 +416,16 @@
           const response = await fetch(GAS_WEB_APP_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-              action: "saveFiles",
-              title: saveTitle,
-              files: filesToUpload,
-              analysisData: quotes.map(({ originalFile, ...rest }) => rest)
-            })
+            body: JSON.stringify((() => {
+  const analysisData = quotes.map(({ originalFile, ...rest }) => rest);
+  const withUnit = analysisData.filter(q => q.unitRecord?.price > 0);
+  let bestUnitPrice = null;
+  if (withUnit.length > 0) {
+    const best = withUnit.reduce((a, b) => a.unitRecord.price < b.unitRecord.price ? a : b);
+    bestUnitPrice = { name: best.name, price: best.unitRecord.price, basis: best.unitRecord.basis };
+  }
+  return { action: "saveFiles", title: saveTitle, files: filesToUpload, analysisData, bestUnitPrice };
+})())
           });
 
           let result;
@@ -468,6 +473,13 @@
           setView('upload');
         }
       };
+      const handleUnitRecordUpdate = (quoteId, field, value) => {
+  setQuotes(prev => prev.map(q => {
+    if (q.id !== quoteId) return q;
+    const cur = q.unitRecord || { basis: 'm²', price: 0 };
+    return { ...q, unitRecord: { ...cur, [field]: field === 'price' ? (Number(value) || 0) : value } };
+  }));
+};
 
       // 저장 목록 관리
       const loadSavedList = async (silent = false) => {
@@ -640,8 +652,13 @@
                                 <span>📄 원본 {item.fileCount}개</span>
                                 <span>📊 견적 {item.quoteCount}개</span>
                                 {item.lowestName && item.lowestTotal !== null && (
-                                  <span className="text-emerald-600 font-bold">💰 {item.lowestName} (₩{formatCurrency(item.lowestTotal)})</span>
-                                )}
+  <span className="text-emerald-600 font-bold">💰 {item.lowestName} (₩{formatCurrency(item.lowestTotal)})</span>
+)}
+{item.bestUnitPrice && item.bestUnitPrice.price > 0 && (
+  <span className="text-blue-600 font-bold">
+    💡 단가 {formatCurrency(item.bestUnitPrice.price)}원/{item.bestUnitPrice.basis} ({item.bestUnitPrice.name})
+  </span>
+)}
                               </div>
                             </div>
                             <div className="flex gap-1.5 flex-shrink-0">
@@ -691,7 +708,64 @@
           </div>
         );
       }
-
+      {/* 원본 파일 뷰어 모달 */}
+{imageViewModal.open && imageViewModal.quote && (() => {
+  const f = imageViewModal.quote.originalFile;
+  const isImage = f?.type?.startsWith('image/');
+  const isPdf = f?.type === 'application/pdf';
+  const dataUrl = f ? `data:${f.type};base64,${f.base64}` : '';
+  return (
+    <div
+      className="fixed inset-0 z-[300] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-fade-in"
+      onClick={() => setImageViewModal({ open: false, quote: null })}>
+      <div
+        className="relative bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800">{imageViewModal.quote.name}</h3>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">{f?.name}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {dataUrl && (
+              
+                href={dataUrl}
+                download={f?.name || '견적서'}
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg font-bold hover:bg-blue-700 transition-colors">
+                <Download size={14}/> 다운로드
+              </a>
+            )}
+            <button
+              onClick={() => setImageViewModal({ open: false, quote: null })}
+              className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
+              <X size={20}/>
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-100">
+          {isImage && dataUrl ? (
+            <img
+              src={dataUrl}
+              alt={f?.name}
+              className="max-w-full max-h-full rounded-lg shadow-md object-contain"/>
+          ) : isPdf && dataUrl ? (
+            <iframe
+              src={dataUrl}
+              className="w-full rounded-lg bg-white"
+              style={{ height: '70vh' }}
+              title={f?.name}/>
+          ) : (
+            <div className="text-center text-slate-500 p-12">
+              <HardDrive size={48} className="mx-auto mb-4 text-slate-300"/>
+              <p className="font-bold mb-1">미리보기를 지원하지 않는 파일 형식입니다.</p>
+              <p className="text-sm text-slate-400">{f?.type || '알 수 없는 형식'}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+})()}
       // ==========================================
       // VIEW 2: 대시보드
       // ==========================================
@@ -975,21 +1049,63 @@
                                 </p>
                               </td>
                               <td className="px-6 py-5">
-                                <div className="flex gap-1.5 justify-center">
-                                  <button
-                                    onClick={() => { setSelectedCompanyId(quote.id); setView('calculator'); }}
-                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                    title="상세 내용 확인 및 수정">
-                                    <Edit3 size={18}/>
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteQuote(quote.id)}
-                                    className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                                    title="비교에서 제외">
-                                    <Trash size={18}/>
-                                  </button>
-                                </div>
-                              </td>
+  {/* 주요특징 텍스트 + 이미지 링크 */}
+  <div className="flex items-start gap-2 mb-3">
+    <p className="text-sm text-slate-600 font-medium max-w-xs flex-1">
+      {quote.keyFeature || quote.summary || '-'}
+    </p>
+    {quote.originalFile && (
+      <button
+        onClick={() => setImageViewModal({ open: true, quote })}
+        className="flex-shrink-0 p-1.5 bg-slate-100 hover:bg-blue-100 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"
+        title="원본 파일 보기">
+        <Camera size={15}/>
+      </button>
+    )}
+  </div>
+  {/* 최저단가 기록 */}
+  <div className="flex items-center gap-1.5 mt-1">
+    <span className="text-xs text-slate-400 font-bold whitespace-nowrap">💡 단가</span>
+    <select
+      value={(quote.unitRecord?.basis) || 'm²'}
+      onChange={e => handleUnitRecordUpdate(quote.id, 'basis', e.target.value)}
+      className="text-xs border border-slate-200 rounded-md px-1.5 py-1 bg-white text-slate-600 font-bold outline-none focus:border-blue-400 cursor-pointer">
+      {['m²','m³','kg','ton','본','개','장','EA','식','m','L','㎡'].map(u => (
+        <option key={u} value={u}>{u}</option>
+      ))}
+    </select>
+    <div className="relative flex-1 min-w-0">
+      <span className="absolute left-2 inset-y-0 flex items-center text-xs text-slate-400 pointer-events-none">₩</span>
+      <input
+        type="number"
+        placeholder="0"
+        value={(quote.unitRecord?.price) || ''}
+        onChange={e => handleUnitRecordUpdate(quote.id, 'price', e.target.value)}
+        className="w-full pl-5 pr-2 py-1 text-xs border border-slate-200 rounded-md font-bold text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300 transition-all bg-white"/>
+    </div>
+    {quote.unitRecord?.price > 0 && (
+      <span className="text-xs bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-md whitespace-nowrap">
+        {formatCurrency(quote.unitRecord.price)}원/{quote.unitRecord.basis || 'm²'}
+      </span>
+    )}
+  </div>
+</td>
+<td className="px-6 py-5">
+  <div className="flex gap-1.5 justify-center">
+    <button
+      onClick={() => { setSelectedCompanyId(quote.id); setView('calculator'); }}
+      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+      title="상세 내용 확인 및 수정">
+      <Edit3 size={18}/>
+    </button>
+    <button
+      onClick={() => handleDeleteQuote(quote.id)}
+      className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+      title="비교에서 제외">
+      <Trash size={18}/>
+    </button>
+  </div>
+</td>
                             </tr>
                           );
                         })}
