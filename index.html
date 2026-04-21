@@ -44,20 +44,31 @@
     const formatMan = (num) => `${Math.round((num || 0) / 10000).toLocaleString('ko-KR')}만`;
 
     const fetchWithBackoff = async (url, options) => {
-      const delays = [1000, 2000, 4000, 8000, 16000];
-      for (let i = 0; i < delays.length; i++) {
-        try {
-          const response = await fetch(url, options);
-          if (response.ok) return response;
-          const errText = await response.text();
-          console.error(`[API Error ${response.status} - 시도 ${i+1}]`, errText);
-          if (i === delays.length - 1) throw new Error(`HTTP Error: ${response.status} - ${errText}`);
-        } catch (error) {
-          if (i === delays.length - 1) throw error;
-        }
-        await new Promise(resolve => setTimeout(resolve, delays[i]));
+  const MAX_RETRIES = 3;
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) return response;
+      const errText = await response.text();
+      console.error(`[API Error ${response.status} - 시도 ${i+1}]`, errText);
+      // 400(키 오류)은 재시도 무의미 → 즉시 실패
+      if (response.status === 400 || response.status === 403) {
+        throw new Error(`HTTP Error: ${response.status} - ${errText}`);
       }
-    };
+      // 429(할당량) → 60초 대기 후 재시도
+      if (response.status === 429) {
+        if (i === MAX_RETRIES - 1) throw new Error(`HTTP Error: ${response.status} - ${errText}`);
+        console.warn(`[429] 할당량 초과. 65초 대기 후 재시도...`);
+        await new Promise(resolve => setTimeout(resolve, 65000));
+        continue;
+      }
+      if (i === MAX_RETRIES - 1) throw new Error(`HTTP Error: ${response.status} - ${errText}`);
+    } catch (error) {
+      if (i === MAX_RETRIES - 1) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000 * (i + 1)));
+  }
+};
 
     const categorizeItems = (items) => {
       let material = 0, delivery = 0, labor = 0, etc = 0;
@@ -325,8 +336,10 @@
         for (let i = 0; i < filesArray.length; i++) {
           const file = filesArray[i];
           setAnalyzeProgress(`[${i + 1} / ${filesArray.length}] ${file.name} 분석 중...`);
-          try {
-            const parsedData = await analyzeSingleFile(file);
+      // 두 번째 파일부터 3초 간격으로 요청 (rate limit 방지)
+      if (i > 0) await new Promise(resolve => setTimeout(resolve, 3000));
+      try {
+        const parsedData = await analyzeSingleFile(file);
             let finalName = parsedData.name;
             const existingNames = [...quotes, ...newQuotes].map(q => q.name);
             if (existingNames.includes(finalName)) {
