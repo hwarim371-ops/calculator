@@ -33,9 +33,9 @@
     import { UploadCloud, CheckCircle, ArrowLeft, Calculator, BarChart3, Edit3, Save, X, Plus, AlertTriangle, TrendingDown, Trash, Info, HardDrive, Camera, Download, FolderOpen, History, ExternalLink, RefreshCw, Ruler, ClipboardCheck, Award, Search } from "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0";
 
     // =========================================================================
-    // ⚙️ 연동 설정
+    // ⚙️ 연동 설정 — API 키를 아래에 입력하세요
     // =========================================================================
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzqbSb9pBnjgjiVNuY64eMrIzqHIYtVqoqA0DC8U-hMXUEh2huKsGFMzZMlJLmcWvV0/exec";
+      const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzqbSb9pBnjgjiVNuY64eMrIzqHIYtVqoqA0DC8U-hMXUEh2huKsGFMzZMlJLmcWvV0/exec";
     const apiKey = "AIzaSyDr7CmU4fof2d8L-IbjK8kG5o34ia3Ge6I";
     const GEMINI_MODEL = apiKey ? "gemini-2.5-flash" : "gemini-2.5-flash-preview-09-2025";
     // =========================================================================
@@ -43,44 +43,30 @@
     const formatCurrency = (num) => new Intl.NumberFormat('ko-KR').format(Math.round(num || 0));
     const formatMan = (num) => `${Math.round((num || 0) / 10000).toLocaleString('ko-KR')}만`;
 
+    // 429 대응 백오프 (400/403 즉시 실패, 429 → 65초 대기 후 재시도)
     const fetchWithBackoff = async (url, options) => {
-  const MAX_RETRIES = 3;
-  for (let i = 0; i < MAX_RETRIES; i++) {
-    try {
-      const response = await fetch(url, options);
-      if (response.ok) return response;
-      const errText = await response.text();
-      console.error(`[API Error ${response.status} - 시도 ${i+1}]`, errText);
-      // 400(키 오류)은 재시도 무의미 → 즉시 실패
-      if (response.status === 400 || response.status === 403) {
-        throw new Error(`HTTP Error: ${response.status} - ${errText}`);
+      const MAX_RETRIES = 3;
+      for (let i = 0; i < MAX_RETRIES; i++) {
+        try {
+          const response = await fetch(url, options);
+          if (response.ok) return response;
+          const errText = await response.text();
+          console.error(`[API Error ${response.status} - 시도 ${i+1}]`, errText);
+          if (response.status === 400 || response.status === 403) {
+            throw new Error(`HTTP Error: ${response.status} - ${errText}`);
+          }
+          if (response.status === 429) {
+            if (i === MAX_RETRIES - 1) throw new Error(`HTTP Error: ${response.status} - ${errText}`);
+            console.warn(`[429] 65초 대기 후 재시도...`);
+            await new Promise(resolve => setTimeout(resolve, 65000));
+            continue;
+          }
+          if (i === MAX_RETRIES - 1) throw new Error(`HTTP Error: ${response.status} - ${errText}`);
+        } catch (error) {
+          if (i === MAX_RETRIES - 1) throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 3000 * (i + 1)));
       }
-      // 429(할당량) → 60초 대기 후 재시도
-      if (response.status === 429) {
-        if (i === MAX_RETRIES - 1) throw new Error(`HTTP Error: ${response.status} - ${errText}`);
-        console.warn(`[429] 할당량 초과. 65초 대기 후 재시도...`);
-        await new Promise(resolve => setTimeout(resolve, 65000));
-        continue;
-      }
-      if (i === MAX_RETRIES - 1) throw new Error(`HTTP Error: ${response.status} - ${errText}`);
-    } catch (error) {
-      if (i === MAX_RETRIES - 1) throw error;
-    }
-    await new Promise(resolve => setTimeout(resolve, 3000 * (i + 1)));
-  }
-};
-
-    const categorizeItems = (items) => {
-      let material = 0, delivery = 0, labor = 0, etc = 0;
-      (items || []).forEach(item => {
-        const text = `${item.name || ''} ${item.spec || ''}`.toLowerCase();
-        const amt = Number(item.total) || 0;
-        if (/운반|운임|배송|택배|화물|물류/.test(text)) delivery += amt;
-        else if (/설치|시공|공임|노무|인건|조립/.test(text)) labor += amt;
-        else if (/할인|단수|조정|차감|쿠폰/.test(text)) etc += amt;
-        else material += amt;
-      });
-      return { material, delivery, labor, etc };
     };
 
     function App() {
@@ -90,7 +76,6 @@
           return s ? JSON.parse(s) : [];
         } catch { return []; }
       });
-
       const [view, setView] = useState(() => {
         try {
           const s = localStorage.getItem('hwarim_quotes');
@@ -98,7 +83,6 @@
           return q.length > 0 ? 'dashboard' : 'upload';
         } catch { return 'upload'; }
       });
-
       const [isAnalyzing, setIsAnalyzing] = useState(false);
       const [analyzeProgress, setAnalyzeProgress] = useState('');
       const [isDragging, setIsDragging] = useState(false);
@@ -159,7 +143,6 @@
           link.click();
           showToast("✅ PNG 이미지가 다운로드 되었습니다!");
         } catch (err) {
-          console.error("캡처 오류:", err);
           showToast("❌ 캡처 실패.");
         } finally {
           setIsCapturing(false);
@@ -167,10 +150,10 @@
       };
 
       // ====================================================================
-      // AI 분석 (Gemini)
+      // AI 분석 (Gemini) — breakdown AI 직접 추정 방식
       // ====================================================================
       const analyzeSingleFile = (file) => {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
           let mimeType = file.type;
           const fileName = file.name.toLowerCase();
           if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
@@ -186,7 +169,8 @@
             name: file.name.replace(/\.[^/.]+$/, '') || "알 수 없는 업체",
             totalSupply: 0, vat: 0, total: 0,
             summary: "파일을 읽을 수 없습니다.", keyFeature: "",
-            items: []
+            items: [],
+            breakdown: { material: 0, shipping: 0, labor: 0, others: 0 }
           });
           reader.onload = async () => {
             const base64Data = reader.result.split(',')[1];
@@ -235,13 +219,15 @@
 납기·결제조건·할인·배송비·방염/방수/항균·유효기간·비고란 중 실제 적힌 것만 간결히. 없으면 "".
 
 【keyFeature (★ 필수, 매우 짧게)】
-이 견적의 핵심 차별점을 **한 줄 15자 내외**로 요약. 예시:
-- "투명/지퍼 등 세부옵션 반영가"
-- "국산원단 방염/방수/항균 처리"
-- "단수정리 할인 적용(-14,000원)"
-- "선금 결제 조건, 유효 15일"
-- "철근 KS SD400 16D 주력"
-없으면 "".
+이 견적의 핵심 차별점을 한 줄 15자 내외로 요약. 예: "선입금 50% 조건", "운반비 포함가", "준불연 나등급". 없으면 "".
+
+【breakdown (비용 구성 추정) ★ 중요】
+전체 공급가액(totalSupply)을 아래 4가지 항목으로 추정해서 반환 (4개 합계 = totalSupply):
+- material: 판넬·자재·부품 등 순수 재료비
+- shipping: 운반·배송·물류비 (명시된 운반비)
+- labor: 설치·시공·공임·인건비
+- others: 할인·단수조정·기타 (음수 가능)
+항목이 없으면 0. 추정이 불확실해도 반드시 4개 숫자를 반환.
 
 【출력】
 순수 JSON만 반환하세요. 마크다운 코드블록이나 불필요한 텍스트는 절대 포함하지 마세요.` },
@@ -273,9 +259,18 @@
                             total: { type: "NUMBER" }
                           }
                         }
+                      },
+                      breakdown: {
+                        type: "OBJECT",
+                        properties: {
+                          material: { type: "NUMBER" },
+                          shipping: { type: "NUMBER" },
+                          labor:    { type: "NUMBER" },
+                          others:   { type: "NUMBER" }
+                        }
                       }
                     },
-                    required: ["name", "totalSupply", "vat", "total", "summary", "keyFeature", "items"]
+                    required: ["name", "totalSupply", "vat", "total", "summary", "keyFeature", "items", "breakdown"]
                   }
                 }
               };
@@ -290,13 +285,17 @@
               if (!jsonText) throw new Error("EMPTY_RESPONSE");
               jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
               const parsedData = JSON.parse(jsonText);
+
+              // 업체명 fallback
               if (!parsedData.name || parsedData.name.trim() === '' || parsedData.name === '알 수 없음') {
                 parsedData.name = file.name.replace(/\.[^/.]+$/, '');
               }
+              // 총액 보정
               if (parsedData.total === 0 && parsedData.totalSupply > 0) {
                 parsedData.vat = Math.round(parsedData.totalSupply * 0.1);
                 parsedData.total = parsedData.totalSupply + parsedData.vat;
               }
+              // items 정규화
               if (Array.isArray(parsedData.items)) {
                 parsedData.items = parsedData.items.map((it, idx) => ({
                   id: it.id || idx + 1,
@@ -308,6 +307,19 @@
                   total: (it.total && it.total > 0) ? Number(it.total) : (Number(it.qty) || 0) * (Number(it.unitPrice) || 0)
                 }));
               }
+              // breakdown fallback (AI가 반환 못한 경우 items로 추정)
+              if (!parsedData.breakdown || (parsedData.breakdown.material === 0 && parsedData.breakdown.shipping === 0 && parsedData.breakdown.labor === 0)) {
+                const bd = { material: 0, shipping: 0, labor: 0, others: 0 };
+                (parsedData.items || []).forEach(it => {
+                  const text = `${it.name || ''} ${it.spec || ''}`.toLowerCase();
+                  const amt = Number(it.total) || 0;
+                  if (/운반|운임|배송|택배|화물|물류/.test(text)) bd.shipping += amt;
+                  else if (/설치|시공|공임|노무|인건|조립/.test(text)) bd.labor += amt;
+                  else bd.material += amt;
+                });
+                parsedData.breakdown = bd;
+              }
+
               resolve({ ...parsedData, originalFile: originalFileContext });
             } catch (err) {
               console.error("[AI 분석 실패]", file.name, err);
@@ -317,6 +329,7 @@
                 summary: `⚠️ AI 분석 실패. API 키 오류 또는 할당량 초과입니다. (${err.message})`,
                 keyFeature: "",
                 items: [],
+                breakdown: { material: 0, shipping: 0, labor: 0, others: 0 },
                 originalFile: originalFileContext,
                 _analysisError: true
               });
@@ -336,10 +349,10 @@
         for (let i = 0; i < filesArray.length; i++) {
           const file = filesArray[i];
           setAnalyzeProgress(`[${i + 1} / ${filesArray.length}] ${file.name} 분석 중...`);
-      // 두 번째 파일부터 3초 간격으로 요청 (rate limit 방지)
-      if (i > 0) await new Promise(resolve => setTimeout(resolve, 3000));
-      try {
-        const parsedData = await analyzeSingleFile(file);
+          // 파일 간 3초 간격 (rate limit 방지)
+          if (i > 0) await new Promise(resolve => setTimeout(resolve, 3000));
+          try {
+            const parsedData = await analyzeSingleFile(file);
             let finalName = parsedData.name;
             const existingNames = [...quotes, ...newQuotes].map(q => q.name);
             if (existingNames.includes(finalName)) {
@@ -359,7 +372,7 @@
           setQuotes(prev => [...prev, ...newQuotes]);
           setView('dashboard');
           if (failCount > 0) {
-            showToast(`✅ ${successCount}개 분석 완료 / ⚠️ ${failCount}개 실패 (콘솔 오류 및 계산기 확인)`);
+            showToast(`✅ ${successCount}개 분석 완료 / ⚠️ ${failCount}개 실패`);
           } else {
             showToast(`✅ 총 ${successCount}개의 견적서가 분석되었습니다!`);
           }
@@ -388,9 +401,7 @@
         if (!saveTitle.trim()) return showToast("저장할 프로젝트(폴더) 이름을 입력해주세요.");
         const filesToUpload = quotes.map(q => q.originalFile).filter(Boolean);
         const hasAnalysis = quotes.length > 0;
-        if (filesToUpload.length === 0 && !hasAnalysis) {
-          return showToast("⚠️ 저장할 내용이 없습니다.");
-        }
+        if (filesToUpload.length === 0 && !hasAnalysis) return showToast("⚠️ 저장할 내용이 없습니다.");
         setIsLoading(true);
         try {
           const analysisData = quotes.map(({ originalFile, ...rest }) => rest);
@@ -406,31 +417,15 @@
             body: JSON.stringify({ action: "saveFiles", title: saveTitle, files: filesToUpload, analysisData, bestUnitPrice })
           });
           let result;
-          try {
-            result = await response.json();
-          } catch (jsonErr) {
-            setDriveErrorModal(true);
-            setIsSaveModal(false);
-            return;
-          }
+          try { result = await response.json(); }
+          catch { setDriveErrorModal(true); setIsSaveModal(false); return; }
           if (result && result.success) {
-            setIsSaveModal(false);
-            setSaveTitle('');
-            const msg = filesToUpload.length > 0
-              ? `✅ 원본 ${filesToUpload.length}개 + 분석결과 저장 완료!`
-              : `✅ 분석결과 저장 완료!`;
-            showToast(msg);
+            setIsSaveModal(false); setSaveTitle('');
+            showToast(filesToUpload.length > 0 ? `✅ 원본 ${filesToUpload.length}개 + 분석결과 저장 완료!` : `✅ 분석결과 저장 완료!`);
             loadSavedList(true);
-          } else {
-            setDriveErrorModal(true);
-            setIsSaveModal(false);
-          }
-        } catch (e) {
-          setDriveErrorModal(true);
-          setIsSaveModal(false);
-        } finally {
-          setIsLoading(false);
-        }
+          } else { setDriveErrorModal(true); setIsSaveModal(false); }
+        } catch { setDriveErrorModal(true); setIsSaveModal(false); }
+        finally { setIsLoading(false); }
       };
 
       const handleUpdateQuote = (updatedQuote) => {
@@ -458,7 +453,6 @@
         }));
       };
 
-      // 저장 목록 관리
       const loadSavedList = async (silent = false) => {
         if (!silent) setIsLoadingList(true);
         try {
@@ -471,14 +465,9 @@
           if (result && result.success) {
             setSavedList(result.items || []);
             if (!silent) setView('history');
-          } else if (!silent) {
-            setDriveErrorModal(true);
-          }
-        } catch (e) {
-          if (!silent) setDriveErrorModal(true);
-        } finally {
-          if (!silent) setIsLoadingList(false);
-        }
+          } else if (!silent) setDriveErrorModal(true);
+        } catch { if (!silent) setDriveErrorModal(true); }
+        finally { if (!silent) setIsLoadingList(false); }
       };
 
       const loadSavedProject = async (folderId, folderName) => {
@@ -491,22 +480,14 @@
           });
           const result = await response.json();
           if (result && result.success && Array.isArray(result.analysisData)) {
-            const restored = result.analysisData.map((q, i) => ({
-              ...q,
-              id: q.id || (Date.now().toString() + i)
-            }));
+            const restored = result.analysisData.map((q, i) => ({ ...q, id: q.id || (Date.now().toString() + i) }));
             setQuotes(restored);
             setLoadedFolderName(result.folderName || folderName || '');
             setView('dashboard');
             showToast(`✅ "${result.folderName}" 불러오기 완료 (${restored.length}개 견적)`);
-          } else {
-            showToast(`❌ 불러오기 실패: ${result.error || "알 수 없는 오류"}`);
-          }
-        } catch (e) {
-          showToast("❌ 서버 통신 오류");
-        } finally {
-          setIsLoading(false);
-        }
+          } else showToast(`❌ 불러오기 실패: ${result.error || "알 수 없는 오류"}`);
+        } catch { showToast("❌ 서버 통신 오류"); }
+        finally { setIsLoading(false); }
       };
 
       const deleteSavedProject = async (folderId, folderName) => {
@@ -519,22 +500,13 @@
             body: JSON.stringify({ action: "deleteSave", folderId })
           });
           const result = await response.json();
-          if (result && result.success) {
-            setSavedList(prev => prev.filter(item => item.id !== folderId));
-            showToast(`✅ ${result.message}`);
-          } else {
-            showToast(`❌ 삭제 실패: ${result.error || "알 수 없는 오류"}`);
-          }
-        } catch (e) {
-          showToast("❌ 서버 통신 오류");
-        } finally {
-          setIsLoadingList(false);
-        }
+          if (result && result.success) { setSavedList(prev => prev.filter(item => item.id !== folderId)); showToast(`✅ ${result.message}`); }
+          else showToast(`❌ 삭제 실패: ${result.error || "알 수 없는 오류"}`);
+        } catch { showToast("❌ 서버 통신 오류"); }
+        finally { setIsLoadingList(false); }
       };
 
-      const filteredSavedList = savedList.filter(item =>
-        item.name.toLowerCase().includes(searchTerm.toLowerCase())
-      );
+      const filteredSavedList = savedList.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
       // ==========================================
       // VIEW 1: 업로드
@@ -546,24 +518,18 @@
               <div className="inline-flex items-center justify-center p-4 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-600/20 mb-6">
                 <Calculator size={36} strokeWidth={2.5} />
               </div>
-              <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-slate-900">
-                화림건설 AI 견적 분석기
-              </h1>
-              <p className="text-lg text-slate-500 font-medium">
-                분석할 견적서를 올리고, 원본 파일을 구글 드라이브에 바로 백업하세요.
-              </p>
+              <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-slate-900">화림건설 AI 견적 분析기</h1>
+              <p className="text-lg text-slate-500 font-medium">분析할 견적서를 올리고, 원본 파일을 구글 드라이브에 바로 백업하세요.</p>
             </div>
-
             <div className="w-full max-w-4xl glass-effect bg-white/80 rounded-[2rem] shadow-2xl p-8 md:p-14 mb-8 border border-white">
               <label
                 className={`group relative flex flex-col items-center justify-center w-full h-80 border-2 border-dashed rounded-3xl transition-all cursor-pointer overflow-hidden ${isDragging ? 'border-blue-500 bg-blue-100 scale-[1.02]' : 'border-blue-200 bg-blue-50/30 hover:bg-blue-50/80 hover:border-blue-400'}`}
-                onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
-              >
+                onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
                 <input type="file" className="hidden" multiple onChange={handleFileChange} accept=".pdf,image/*" disabled={isAnalyzing} ref={fileInputRef} />
                 {isAnalyzing ? (
                   <div className="flex flex-col items-center z-10">
                     <div className="loader-ring mb-6"></div>
-                    <p className="text-2xl font-bold text-blue-700 mb-2">AI가 문서를 정밀 분석 중입니다...</p>
+                    <p className="text-2xl font-bold text-blue-700 mb-2">AI가 문서를 정밀 分析 중입니다...</p>
                     <p className="text-slate-600 font-bold bg-white/50 px-4 py-1.5 rounded-full">{analyzeProgress}</p>
                   </div>
                 ) : (
@@ -579,37 +545,24 @@
                 )}
               </label>
             </div>
-
             <div className="w-full max-w-4xl bg-blue-50/50 rounded-3xl border border-blue-100 p-8 text-center shadow-sm mb-8">
               <div className="flex justify-center mb-4 text-blue-500"><HardDrive size={40} /></div>
               <h3 className="text-xl font-bold text-blue-900 mb-2">구글 드라이브 원본 다이렉트 업로드 지원</h3>
-              <p className="text-blue-700 font-medium">분석이 끝난 후 <b>'드라이브 저장'</b> 버튼을 누르면, 원본 견적서(PDF, 이미지)와 AI 분석결과가 구글 드라이브 <b>'화림건설 견적분석기'</b> 폴더에 안전하게 업로드됩니다.</p>
+              <p className="text-blue-700 font-medium">분析이 끝난 후 <b>'드라이브 저장'</b> 버튼을 누르면, 원본 견적서(PDF, 이미지)와 AI 분析결과가 구글 드라이브 <b>'화림건설 견적分析기'</b> 폴더에 안전하게 업로드됩니다.</p>
             </div>
-
             {savedList.length > 0 && (
               <div className="w-full max-w-4xl">
                 <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="px-6 md:px-8 py-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between bg-slate-50/50 gap-4">
                     <div>
-                      <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                        <History className="text-blue-600" size={22}/> 저장된 분석 내역
-                      </h3>
-                      <p className="text-sm text-slate-500 font-medium mt-1">
-                        총 <b className="text-blue-600">{savedList.length}</b>개 · '불러오기'를 누르면 대시보드로 복원됩니다
-                      </p>
+                      <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><History className="text-blue-600" size={22}/> 저장된 분析 내역</h3>
+                      <p className="text-sm text-slate-500 font-medium mt-1">총 <b className="text-blue-600">{savedList.length}</b>개 · '불러오기'를 누르면 대시보드로 복원됩니다</p>
                     </div>
                     <div className="flex gap-2 w-full md:w-auto">
                       <div className="relative flex-1 md:w-64">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <Search size={16} className="text-slate-400"/>
-                        </div>
-                        <input
-                          type="text"
-                          placeholder="프로젝트 검색..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium"
-                        />
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search size={16} className="text-slate-400"/></div>
+                        <input type="text" placeholder="프로젝트 검색..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium"/>
                       </div>
                       <button onClick={() => loadSavedList(true)} className="p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors shrink-0" title="목록 새로고침">
                         <RefreshCw size={18} className={isLoadingList ? "animate-spin" : ""}/>
@@ -617,54 +570,49 @@
                     </div>
                   </div>
                   <div className="divide-y divide-slate-100 max-h-[520px] overflow-y-auto custom-scrollbar">
-                    {filteredSavedList.length > 0 ? (
-                      filteredSavedList.map(item => (
-                        <div key={item.id} className="px-6 md:px-8 py-4 hover:bg-slate-50 transition-colors">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <h4 className="font-bold text-slate-900 truncate mb-1">{item.name}</h4>
-                              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500 font-medium">
-                                <span>📅 {new Date(item.createdAt).toLocaleString('ko-KR', {dateStyle:'medium', timeStyle:'short'})}</span>
-                                <span>📄 원본 {item.fileCount}개</span>
-                                <span>📊 견적 {item.quoteCount}개</span>
-                                {item.lowestName && item.lowestTotal !== null && (
-                                  <span className="text-emerald-600 font-bold">💰 {item.lowestName} (₩{formatCurrency(item.lowestTotal)})</span>
-                                )}
-                                {item.bestUnitPrice && item.bestUnitPrice.price > 0 && (
-                                  <span className="text-blue-600 font-bold">
-                                    💡 단가 {formatCurrency(item.bestUnitPrice.price)}원/{item.bestUnitPrice.basis} ({item.bestUnitPrice.name})
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex gap-1.5 flex-shrink-0">
-                              <button onClick={() => loadSavedProject(item.id, item.name)} disabled={!item.hasAnalysis || isLoading}
-                                className="px-3 md:px-4 py-2 bg-blue-600 text-white text-sm rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap flex items-center gap-1"
-                                title={item.hasAnalysis ? "이 분석 불러오기" : "분석결과 없음"}>
-                                <FolderOpen size={14}/> <span className="hidden md:inline">불러오기</span>
-                              </button>
-                              <a href={item.url} target="_blank" rel="noopener noreferrer"
-                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="구글 드라이브에서 열기">
-                                <ExternalLink size={16}/>
-                              </a>
-                              <button onClick={() => deleteSavedProject(item.id, item.name)}
-                                className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="삭제 (휴지통)">
-                                <Trash size={16}/>
-                              </button>
+                    {filteredSavedList.length > 0 ? filteredSavedList.map(item => (
+                      <div key={item.id} className="px-6 md:px-8 py-4 hover:bg-slate-50 transition-colors">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-bold text-slate-900 truncate mb-1">{item.name}</h4>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500 font-medium">
+                              <span>📅 {new Date(item.createdAt).toLocaleString('ko-KR', {dateStyle:'medium', timeStyle:'short'})}</span>
+                              <span>📄 원본 {item.fileCount}개</span>
+                              <span>📊 견적 {item.quoteCount}개</span>
+                              {item.lowestName && item.lowestTotal !== null && (
+                                <span className="text-emerald-600 font-bold">💰 {item.lowestName} (₩{formatCurrency(item.lowestTotal)})</span>
+                              )}
+                              {item.bestUnitPrice && item.bestUnitPrice.price > 0 && (
+                                <span className="text-blue-600 font-bold">
+                                  💡 단가 {formatCurrency(item.bestUnitPrice.price)}원/{item.bestUnitPrice.basis} ({item.bestUnitPrice.name})
+                                </span>
+                              )}
                             </div>
                           </div>
+                          <div className="flex gap-1.5 flex-shrink-0">
+                            <button onClick={() => loadSavedProject(item.id, item.name)} disabled={!item.hasAnalysis || isLoading}
+                              className="px-3 md:px-4 py-2 bg-blue-600 text-white text-sm rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap flex items-center gap-1">
+                              <FolderOpen size={14}/> <span className="hidden md:inline">불러오기</span>
+                            </button>
+                            <a href={item.url} target="_blank" rel="noopener noreferrer"
+                              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="구글 드라이브에서 열기">
+                              <ExternalLink size={16}/>
+                            </a>
+                            <button onClick={() => deleteSavedProject(item.id, item.name)}
+                              className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="삭제 (휴지통)">
+                              <Trash size={16}/>
+                            </button>
+                          </div>
                         </div>
-                      ))
-                    ) : (
+                      </div>
+                    )) : (
                       <div className="p-8 text-center text-slate-500 font-medium">검색 결과가 없습니다.</div>
                     )}
                   </div>
                 </div>
               </div>
             )}
-
             {toast && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-8 py-4 rounded-xl shadow-2xl z-[100] font-bold animate-fade-in flex items-center gap-2"><CheckCircle size={18} className="text-emerald-400"/> {toast}</div>}
-
             {driveErrorModal && (
               <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-in">
                 <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
@@ -672,9 +620,7 @@
                     <AlertTriangle className="text-rose-600" size={32} />
                     <h3 className="text-2xl font-extrabold text-rose-800 tracking-tight">구글 드라이브 통신 오류</h3>
                   </div>
-                  <div className="p-8 text-slate-700 space-y-4 font-medium">
-                    <p className="text-lg">연결된 구글 앱스 스크립트(GAS) 설정이 올바르지 않거나 권한이 없습니다.</p>
-                  </div>
+                  <div className="p-8 text-slate-700 font-medium"><p className="text-lg">연결된 구글 앱스 스크립트(GAS) 설정이 올바르지 않거나 권한이 없습니다.</p></div>
                   <div className="p-5 bg-slate-50 border-t border-slate-200 flex justify-end">
                     <button onClick={() => setDriveErrorModal(false)} className="px-8 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-colors shadow-md">확인</button>
                   </div>
@@ -693,14 +639,16 @@
         const lowestQuote = sortedQuotes[0];
         const highestQuote = sortedQuotes[sortedQuotes.length - 1];
 
+        // ★ AI breakdown 기반 차트 데이터 (3.2 방식)
         const chartData = quotes.map(q => {
-          const c = categorizeItems(q.items);
+          const bd = q.breakdown;
           return {
             name: q.name,
-            자재비: c.material + c.etc,
-            운반시공: c.delivery + c.labor,
-            부가세: q.vat || 0,
-            total: q.total,
+            자재비:   bd ? (bd.material || 0) : 0,
+            운반시공: bd ? ((bd.shipping || 0) + (bd.labor || 0)) : 0,
+            기타:     bd ? Math.max(0, bd.others || 0) : 0,
+            부가세:   q.vat || 0,
+            total:    q.total,
           };
         });
 
@@ -724,23 +672,18 @@
         return (
           <div className="min-h-screen bg-slate-50 p-4 md:p-8 animate-fade-in font-sans text-slate-800">
             <div className="max-w-7xl mx-auto space-y-6">
-
               {/* 상단 컨트롤 바 */}
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                 <div className="flex items-center gap-4">
-                  <button
-                    onClick={() => { setQuotes([]); localStorage.removeItem('hwarim_quotes'); setLoadedFolderName(''); setView('upload'); }}
-                    className="p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors text-slate-600"
-                    title="초기화 후 업로드 화면으로">
+                  <button onClick={() => { setQuotes([]); localStorage.removeItem('hwarim_quotes'); setLoadedFolderName(''); setView('upload'); }}
+                    className="p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors text-slate-600" title="초기화 후 업로드 화면으로">
                     <ArrowLeft size={20} />
                   </button>
                   <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2 flex-wrap">
-                      <BarChart3 className="text-blue-600" /> AI 비교 분석 리포트
+                      <BarChart3 className="text-blue-600" /> AI 비교 分析 리포트
                       {loadedFolderName && (
-                        <span className="text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-md font-bold" title="구글 드라이브에서 불러온 저장분">
-                          📂 {loadedFolderName}
-                        </span>
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-md font-bold">📂 {loadedFolderName}</span>
                       )}
                     </h1>
                     <p className="text-sm text-slate-500 font-medium mt-1">현재 {quotes.length}개의 견적서 데이터가 활성화되어 있습니다.</p>
@@ -761,9 +704,7 @@
                   </button>
                   <button onClick={captureReport} disabled={isCapturing}
                     className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-colors shadow-md disabled:opacity-60">
-                    {isCapturing
-                      ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> 캡처 중...</>
-                      : <><Camera size={18}/> 이미지 캡처</>}
+                    {isCapturing ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> 캡처 중...</> : <><Camera size={18}/> 이미지 캡처</>}
                   </button>
                 </div>
               </div>
@@ -777,80 +718,70 @@
 
               {/* 캡처 대상 영역 */}
               <div ref={reportRef} className="space-y-6 bg-slate-50 p-2 rounded-2xl">
-
+                {/* KPI 카드 */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-white rounded-2xl shadow-sm border-l-4 border-emerald-500 p-6">
-                    <p className="text-slate-500 text-sm font-bold mb-2 flex items-center gap-1.5">
-                      <CheckCircle size={16} className="text-emerald-500"/> 최저가 제안 업체
-                    </p>
+                    <p className="text-slate-500 text-sm font-bold mb-2 flex items-center gap-1.5"><CheckCircle size={16} className="text-emerald-500"/> 최저가 제안 업체</p>
                     <h3 className="text-2xl font-extrabold text-slate-900 mb-1">{lowestQuote?.name || '-'}</h3>
-                    <p className="text-emerald-600 text-xl font-bold">
-                      ₩ {formatCurrency(lowestQuote?.total)} <span className="text-xs text-slate-400">(VAT포함)</span>
-                    </p>
+                    <p className="text-emerald-600 text-xl font-bold">₩ {formatCurrency(lowestQuote?.total)} <span className="text-xs text-slate-400">(VAT포함)</span></p>
                   </div>
                   <div className="bg-white rounded-2xl shadow-sm border-l-4 border-rose-500 p-6">
-                    <p className="text-slate-500 text-sm font-bold mb-2 flex items-center gap-1.5">
-                      <AlertTriangle size={16} className="text-rose-500"/> 최고가 제안 업체
-                    </p>
+                    <p className="text-slate-500 text-sm font-bold mb-2 flex items-center gap-1.5"><AlertTriangle size={16} className="text-rose-500"/> 최고가 제안 업체</p>
                     <h3 className="text-2xl font-extrabold text-slate-900 mb-1">{highestQuote?.name || '-'}</h3>
-                    <p className="text-rose-500 text-xl font-bold">
-                      ₩ {formatCurrency(highestQuote?.total)} <span className="text-xs text-slate-400">(VAT포함)</span>
-                    </p>
+                    <p className="text-rose-500 text-xl font-bold">₩ {formatCurrency(highestQuote?.total)} <span className="text-xs text-slate-400">(VAT포함)</span></p>
                   </div>
                   <div className="bg-white rounded-2xl shadow-sm border-l-4 border-blue-500 p-6">
-                    <p className="text-slate-500 text-sm font-bold mb-2 flex items-center gap-1.5">
-                      <TrendingDown size={16} className="text-blue-500"/> 예상 절감액 (최고가 대비)
-                    </p>
+                    <p className="text-slate-500 text-sm font-bold mb-2 flex items-center gap-1.5"><TrendingDown size={16} className="text-blue-500"/> 예상 절감액 (최고가 대비)</p>
                     <h3 className="text-3xl font-extrabold text-blue-600 mt-2">
                       {quotes.length > 1 ? `₩ ${formatCurrency(highestQuote?.total - lowestQuote?.total)}` : '비교 대상 부족'}
                     </h3>
-                    <p className="text-slate-400 text-xs mt-1">
-                      {quotes.length > 1 ? '최저가 선택 시 절감 가능 비용' : '2개 이상의 견적서를 업로드해주세요'}
-                    </p>
+                    <p className="text-slate-400 text-xs mt-1">{quotes.length > 1 ? '최저가 선택 시 절감 가능 비용' : '2개 이상의 견적서를 업로드해주세요'}</p>
                   </div>
                 </div>
 
-                {/* 스택 바 차트 */}
+                {/* 차트 */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-8">
                   <h3 className="text-2xl font-bold text-slate-800 mb-2">📊 업체별 견적 구성 비교</h3>
+                  <p className="text-xs text-slate-400 font-medium mb-4">※ 비용 구성은 AI가 견적서 전체 맥락으로 추정한 값입니다.</p>
                   {quotes.length > 0 ? (
-                    <div className="h-[450px] w-full mt-4">
+                    <div className="h-[450px] w-full mt-2">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{top: 30, right: 30, left: 20, bottom: 20}}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false}/>
-                          <XAxis dataKey="name" tick={{ fontSize: 14, fontWeight: 'bold', fill: '#475569' }} axisLine={false} tickLine={false} dy={10}/>
-                          <YAxis tickFormatter={(v) => `${(v/10000).toFixed(0)}만`} tick={{ fontSize: 13, fill: '#94a3b8', fontWeight: 'bold' }} axisLine={false} tickLine={false} dx={-10}/>
+                          <XAxis dataKey="name" tick={{ fontSize: 13, fontWeight: 'bold', fill: '#475569' }} axisLine={false} tickLine={false} dy={10}/>
+                          <YAxis tickFormatter={(v) => `${(v/10000).toFixed(0)}만`} tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }} axisLine={false} tickLine={false} dx={-10}/>
                           <Tooltip
                             formatter={(value, name) => [`₩ ${formatCurrency(value)}`, name]}
                             cursor={{ fill: 'rgba(59,130,246,0.05)' }}
                             contentStyle={{ borderRadius: '16px', border: 'none', fontWeight: 'bold', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', padding: '12px 20px' }}
-                            itemStyle={{ fontSize: '15px', padding: '4px 0' }}
+                            itemStyle={{ fontSize: '14px', padding: '4px 0' }}
                           />
-                          <Legend wrapperStyle={{ paddingTop: '20px', fontWeight: 'bold', fontSize: '14px' }} iconType="circle" />
+                          <Legend wrapperStyle={{ paddingTop: '20px', fontWeight: 'bold', fontSize: '13px' }} iconType="circle" />
                           <Bar dataKey="자재비" stackId="a" fill="#3b82f6" radius={[0,0,0,0]} barSize={80}>
-                            <LabelList dataKey="자재비" position="center" formatter={(v)=> (v && v > 500000) ? formatMan(v) : ''} style={{fontSize:13, fontWeight:'bold', fill:'#fff'}}/>
+                            <LabelList dataKey="자재비" position="center" formatter={(v)=> (v && v > 500000) ? formatMan(v) : ''} style={{fontSize:12, fontWeight:'bold', fill:'#fff'}}/>
                           </Bar>
                           <Bar dataKey="운반시공" stackId="a" fill="#10b981" barSize={80}>
-                            <LabelList dataKey="운반시공" position="center" formatter={(v)=> (v && v > 300000) ? formatMan(v) : ''} style={{fontSize:13, fontWeight:'bold', fill:'#fff'}}/>
+                            <LabelList dataKey="운반시공" position="center" formatter={(v)=> (v && v > 300000) ? formatMan(v) : ''} style={{fontSize:12, fontWeight:'bold', fill:'#fff'}}/>
+                          </Bar>
+                          <Bar dataKey="기타" stackId="a" fill="#f97316" barSize={80}>
+                            <LabelList dataKey="기타" position="center" formatter={(v)=> (v && v > 300000) ? formatMan(v) : ''} style={{fontSize:12, fontWeight:'bold', fill:'#fff'}}/>
                           </Bar>
                           <Bar dataKey="부가세" stackId="a" fill="#94a3b8" radius={[12,12,0,0]} barSize={80}>
-                            <LabelList dataKey="total" position="top" formatter={(v)=> v ? `₩${formatCurrency(v)}` : ''} style={{fontSize:14, fontWeight:'900', fill:'#1e293b'}} offset={15}/>
+                            <LabelList dataKey="total" position="top" formatter={(v)=> v ? `₩${formatCurrency(v)}` : ''} style={{fontSize:13, fontWeight:'900', fill:'#1e293b'}} offset={15}/>
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   ) : (
                     <div className="bg-blue-50/50 border border-blue-100 p-8 rounded-2xl text-center h-60 flex flex-col items-center justify-center mt-4">
-                      <p className="text-blue-800 font-bold">분석된 견적서가 없습니다.</p>
+                      <p className="text-blue-800 font-bold">分析된 견적서가 없습니다.</p>
                     </div>
                   )}
                 </div>
 
-                {/* AI 분석 리포트 */}
+                {/* AI 분析 리포트 */}
                 <div className="bg-slate-800 rounded-2xl shadow-sm p-6 md:p-8 text-white">
-                  <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-blue-300">
-                    <Info size={20} /> AI 분석 리포트
-                  </h3>
+                  <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-blue-300"><Info size={20} /> AI 分析 리포트</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="bg-slate-700/50 rounded-xl p-5 border border-slate-700">
                       <div className="flex items-center gap-2 mb-3">
@@ -872,13 +803,9 @@
                         <h4 className="font-bold text-white">규격 차이</h4>
                       </div>
                       {specMixing ? (
-                        <p className="text-sm text-slate-300 leading-relaxed">
-                          단위 혼용 감지: <strong className="text-amber-400">{specMixing}</strong>. 실측치 동일 여부를 반드시 확인하세요.
-                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed">단위 혼용 감지: <strong className="text-amber-400">{specMixing}</strong>. 실측치 동일 여부를 반드시 확인하세요.</p>
                       ) : (
-                        <p className="text-sm text-slate-300 leading-relaxed">
-                          주요 품목의 규격이 {quotes.length > 1 ? '일관적으로' : ''} 기재되어 있습니다. 세부 품목별 비교는 아래 리스트를 확인하세요.
-                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed">주요 품목의 규격이 {quotes.length > 1 ? '일관적으로' : ''} 기재되어 있습니다. 세부 품목별 비교는 아래 리스트를 확인하세요.</p>
                       )}
                     </div>
                     <div className="bg-slate-700/50 rounded-xl p-5 border border-slate-700">
@@ -919,31 +846,23 @@
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {sortedQuotes.map(quote => {
-                          const c = categorizeItems(quote.items);
+                          const bd = quote.breakdown;
                           const isLowest = quote.id === lowestQuote?.id && quotes.length > 1;
+                          const matAmt  = bd ? (bd.material || 0) : 0;
+                          const shpAmt  = bd ? ((bd.shipping || 0) + (bd.labor || 0)) : 0;
+                          const othAmt  = bd ? Math.max(0, bd.others || 0) : 0;
                           return (
                             <tr key={quote.id} className="hover:bg-slate-50/80 transition-colors">
                               <td className="px-6 py-5">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="font-extrabold text-slate-900 text-base">{quote.name}</span>
-                                  {isLowest && (
-                                    <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded-md">최저가</span>
-                                  )}
-                                  {!quote.originalFile && (
-                                    <span className="bg-slate-100 text-slate-500 text-xs font-bold px-2 py-0.5 rounded-md" title="복원된 데이터">📂</span>
-                                  )}
+                                  {isLowest && <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded-md">최저가</span>}
+                                  {!quote.originalFile && <span className="bg-slate-100 text-slate-500 text-xs font-bold px-2 py-0.5 rounded-md" title="복원된 데이터">📂</span>}
                                 </div>
                                 <div className="flex flex-wrap gap-1.5 mt-2">
-                                  {c.material > 0 && (
-                                    <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-bold px-2 py-0.5 rounded">
-                                      자재 {formatMan(c.material)}
-                                    </span>
-                                  )}
-                                  {(c.delivery + c.labor) > 0 && (
-                                    <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded">
-                                      운반/시공 {formatMan(c.delivery + c.labor)}
-                                    </span>
-                                  )}
+                                  {matAmt > 0 && <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-bold px-2 py-0.5 rounded">자재 {formatMan(matAmt)}</span>}
+                                  {shpAmt > 0 && <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded">운반/시공 {formatMan(shpAmt)}</span>}
+                                  {othAmt > 0 && <span className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 text-xs font-bold px-2 py-0.5 rounded">기타 {formatMan(othAmt)}</span>}
                                   <span className="text-xs text-slate-400 font-medium">항목 {quote.items?.length || 0}개</span>
                                 </div>
                               </td>
@@ -951,42 +870,28 @@
                                 <p className="text-base font-bold text-slate-700">₩ {formatCurrency(quote.totalSupply)}</p>
                               </td>
                               <td className="px-6 py-5 text-right">
-                                <p className={`text-xl font-black ${isLowest ? 'text-emerald-600' : 'text-slate-900'}`}>
-                                  ₩ {formatCurrency(quote.total)}
-                                </p>
+                                <p className={`text-xl font-black ${isLowest ? 'text-emerald-600' : 'text-slate-900'}`}>₩ {formatCurrency(quote.total)}</p>
                               </td>
-
-                              {/* ✅ 주요특징 + 이미지버튼 + 최저단가 기록 (td 1개) */}
+                              {/* 주요특징 + 이미지 버튼 + 최저단가 기록 */}
                               <td className="px-6 py-5">
                                 <div className="flex items-start gap-2 mb-2">
-                                  <p className="text-sm text-slate-600 font-medium flex-1">
-                                    {quote.keyFeature || quote.summary || '-'}
-                                  </p>
+                                  <p className="text-sm text-slate-600 font-medium flex-1">{quote.keyFeature || quote.summary || '-'}</p>
                                   {quote.originalFile && (
-                                    <button
-                                      onClick={() => setImageViewModal({ open: true, quote })}
-                                      className="flex-shrink-0 p-1.5 bg-slate-100 hover:bg-blue-100 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"
-                                      title="원본 파일 보기">
+                                    <button onClick={() => setImageViewModal({ open: true, quote })}
+                                      className="flex-shrink-0 p-1.5 bg-slate-100 hover:bg-blue-100 text-slate-400 hover:text-blue-600 rounded-lg transition-colors" title="원본 파일 보기">
                                       <Camera size={15}/>
                                     </button>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-xs text-slate-400 font-bold whitespace-nowrap">💡 단가</span>
-                                  <select
-                                    value={(quote.unitRecord?.basis) || 'm²'}
-                                    onChange={e => handleUnitRecordUpdate(quote.id, 'basis', e.target.value)}
+                                  <select value={(quote.unitRecord?.basis) || 'm²'} onChange={e => handleUnitRecordUpdate(quote.id, 'basis', e.target.value)}
                                     className="text-xs border border-slate-200 rounded-md px-1.5 py-1 bg-white text-slate-600 font-bold outline-none focus:border-blue-400 cursor-pointer">
-                                    {['m²','m³','kg','ton','본','개','장','EA','식','m','L','㎡'].map(u => (
-                                      <option key={u} value={u}>{u}</option>
-                                    ))}
+                                    {['m²','m³','kg','ton','본','개','장','EA','식','m','L','㎡'].map(u => <option key={u} value={u}>{u}</option>)}
                                   </select>
                                   <div className="relative flex-1 min-w-0">
                                     <span className="absolute left-2 inset-y-0 flex items-center text-xs text-slate-400 pointer-events-none">₩</span>
-                                    <input
-                                      type="number"
-                                      placeholder="0"
-                                      value={(quote.unitRecord?.price) || ''}
+                                    <input type="number" placeholder="0" value={(quote.unitRecord?.price) || ''}
                                       onChange={e => handleUnitRecordUpdate(quote.id, 'price', e.target.value)}
                                       className="w-full pl-5 pr-2 py-1 text-xs border border-slate-200 rounded-md font-bold text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300 transition-all bg-white"/>
                                   </div>
@@ -997,20 +902,15 @@
                                   )}
                                 </div>
                               </td>
-
-                              {/* ✅ 관리 버튼 td */}
+                              {/* 관리 버튼 */}
                               <td className="px-6 py-5">
                                 <div className="flex gap-1.5 justify-center">
-                                  <button
-                                    onClick={() => { setSelectedCompanyId(quote.id); setView('calculator'); }}
-                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                    title="상세 내용 확인 및 수정">
+                                  <button onClick={() => { setSelectedCompanyId(quote.id); setView('calculator'); }}
+                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="상세 내용 확인 및 수정">
                                     <Edit3 size={18}/>
                                   </button>
-                                  <button
-                                    onClick={() => handleDeleteQuote(quote.id)}
-                                    className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                                    title="비교에서 제외">
+                                  <button onClick={() => handleDeleteQuote(quote.id)}
+                                    className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="비교에서 제외">
                                     <Trash size={18}/>
                                   </button>
                                 </div>
@@ -1022,7 +922,6 @@
                     </table>
                   </div>
                 </div>
-
               </div>{/* end reportRef */}
             </div>
 
@@ -1030,12 +929,8 @@
             {isSaveModal && (
               <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-fade-in">
                 <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl border border-slate-100">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                      <HardDrive className="text-blue-600"/> 원본 파일 드라이브 업로드
-                    </h3>
-                  </div>
-                  <p className="text-sm text-slate-500 mb-2 font-medium">분석 원본 파일과 AI 분석결과가 <b>구글 드라이브 → 화림건설 견적분석기</b> 폴더에 저장됩니다.</p>
+                  <h3 className="text-2xl font-bold text-slate-900 flex items-center gap-2 mb-4"><HardDrive className="text-blue-600"/> 원본 파일 드라이브 업로드</h3>
+                  <p className="text-sm text-slate-500 mb-2 font-medium">분析 원본 파일과 AI 分析결과가 <b>구글 드라이브 → 화림건설 견적分析기</b> 폴더에 저장됩니다.</p>
                   <label className="block text-sm font-bold text-slate-700 mb-2">생성할 폴더 이름</label>
                   <input type="text" value={saveTitle} onChange={e => setSaveTitle(e.target.value)}
                     placeholder="예: 2026년 OO현장 자재 단가 비교"
@@ -1051,18 +946,16 @@
               </div>
             )}
 
-            {/* ✅ 원본 파일 뷰어 모달 */}
+            {/* 원본 파일 뷰어 모달 */}
             {imageViewModal.open && imageViewModal.quote && (() => {
               const f = imageViewModal.quote.originalFile;
               const isImage = f?.type?.startsWith('image/');
               const isPdf = f?.type === 'application/pdf';
               const dataUrl = f ? `data:${f.type};base64,${f.base64}` : '';
               return (
-                <div
-                  className="fixed inset-0 z-[300] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-fade-in"
+                <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-fade-in"
                   onClick={() => setImageViewModal({ open: false, quote: null })}>
-                  <div
-                    className="relative bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+                  <div className="relative bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
                     onClick={e => e.stopPropagation()}>
                     <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
                       <div>
@@ -1071,15 +964,12 @@
                       </div>
                       <div className="flex items-center gap-2">
                         {dataUrl && (
-                          <a
-                            href={dataUrl}
-                            download={f?.name || '견적서'}
+                          <a href={dataUrl} download={f?.name || '견적서'}
                             className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg font-bold hover:bg-blue-700 transition-colors">
                             <Download size={14}/> 다운로드
                           </a>
                         )}
-                        <button
-                          onClick={() => setImageViewModal({ open: false, quote: null })}
+                        <button onClick={() => setImageViewModal({ open: false, quote: null })}
                           className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
                           <X size={20}/>
                         </button>
@@ -1110,16 +1000,13 @@
                     <AlertTriangle className="text-rose-600" size={32} />
                     <h3 className="text-2xl font-extrabold text-rose-800 tracking-tight">구글 드라이브 업로드 오류</h3>
                   </div>
-                  <div className="p-8 text-slate-700 space-y-4 font-medium">
-                    <p className="text-lg">연결된 구글 앱스 스크립트(GAS) 설정이 올바르지 않거나 권한이 없습니다.</p>
-                  </div>
+                  <div className="p-8 text-slate-700 font-medium"><p className="text-lg">연결된 구글 앱스 스크립트(GAS) 설정이 올바르지 않거나 권한이 없습니다.</p></div>
                   <div className="p-5 bg-slate-50 border-t border-slate-200 flex justify-end">
                     <button onClick={() => setDriveErrorModal(false)} className="px-8 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-colors shadow-md">확인</button>
                   </div>
                 </div>
               </div>
             )}
-
             {toast && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-8 py-4 rounded-xl shadow-2xl z-[100] font-bold animate-fade-in flex items-center gap-2"><CheckCircle size={18} className="text-emerald-400"/> {toast}</div>}
           </div>
         );
@@ -1138,22 +1025,13 @@
                     className="p-3 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors text-slate-600" title="뒤로가기">
                     <ArrowLeft size={20} />
                   </button>
-                  <h1 className="text-2xl font-bold flex items-center gap-2">
-                    <History className="text-blue-600" /> 저장된 분석 목록
-                  </h1>
+                  <h1 className="text-2xl font-bold flex items-center gap-2"><History className="text-blue-600" /> 저장된 分析 목록</h1>
                 </div>
                 <div className="flex gap-2 w-full md:w-auto">
                   <div className="relative flex-1 md:w-64">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Search size={16} className="text-slate-400"/>
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="프로젝트 검색..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium"
-                    />
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search size={16} className="text-slate-400"/></div>
+                    <input type="text" placeholder="프로젝트 검색..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium"/>
                   </div>
                   <button onClick={() => loadSavedList(false)} disabled={isLoadingList}
                     className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors disabled:opacity-60 shrink-0">
@@ -1161,7 +1039,6 @@
                   </button>
                 </div>
               </div>
-
               {isLoadingList ? (
                 <div className="bg-white p-12 rounded-2xl shadow-sm border border-slate-200 text-center">
                   <div className="loader-ring mx-auto mb-4"></div>
@@ -1170,7 +1047,7 @@
               ) : savedList.length === 0 ? (
                 <div className="bg-white p-12 rounded-2xl shadow-sm border border-slate-200 text-center">
                   <FolderOpen size={48} className="mx-auto text-slate-300 mb-4"/>
-                  <p className="text-lg font-bold text-slate-600 mb-1">아직 저장된 분석이 없습니다</p>
+                  <p className="text-lg font-bold text-slate-600 mb-1">아직 저장된 분析이 없습니다</p>
                 </div>
               ) : filteredSavedList.length === 0 ? (
                 <div className="bg-white p-12 rounded-2xl shadow-sm border border-slate-200 text-center">
@@ -1276,7 +1153,6 @@
                 <CheckCircle size={18}/> 수정 완료
               </button>
             </div>
-
             <div className="p-6 md:p-8 overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead>
@@ -1307,7 +1183,7 @@
                         <input type="number" value={item.unitPrice} onChange={(e) => handleItemChange(idx, 'unitPrice', e.target.value)} className="w-full p-2 border border-slate-200 rounded-lg text-right font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
                       </td>
                       <td className="p-4 text-right font-bold text-blue-700 text-lg">
-                        {formatCurrency(item.total)}
+                        {new Intl.NumberFormat('ko-KR').format(Math.round(item.total || 0))}
                       </td>
                       <td className="p-4 text-center">
                         <button onClick={() => handleRemoveItem(idx)} className="text-slate-300 hover:text-rose-500 p-1 transition-colors"><Trash size={18}/></button>
@@ -1320,15 +1196,14 @@
                 <Plus size={16}/> 품목 추가하기
               </button>
             </div>
-
             <div className="bg-slate-900 p-6 md:p-8 text-white flex flex-col md:flex-row justify-end items-end md:items-center gap-6">
               <div className="text-right text-slate-400 text-sm font-medium">
-                <p className="mb-1">공급가액: ₩ {formatCurrency(totalSupply)}</p>
-                <p>부가세(10%): ₩ {formatCurrency(vat)}</p>
+                <p className="mb-1">공급가액: ₩ {new Intl.NumberFormat('ko-KR').format(totalSupply)}</p>
+                <p>부가세(10%): ₩ {new Intl.NumberFormat('ko-KR').format(vat)}</p>
               </div>
               <div className="text-right">
                 <p className="text-slate-400 text-sm font-bold mb-1">총 합계 (VAT 포함)</p>
-                <p className="text-3xl md:text-4xl font-black text-emerald-400">₩ {formatCurrency(total)}</p>
+                <p className="text-3xl md:text-4xl font-black text-emerald-400">₩ {new Intl.NumberFormat('ko-KR').format(total)}</p>
               </div>
             </div>
           </div>
